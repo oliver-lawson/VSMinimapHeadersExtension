@@ -9,7 +9,7 @@ Optionally shows:
 
 Inspired by the comment headers in VSCode that I always wanted in VS!
 
-![Screenshot](Header-Vs-Screenshot.png)
+![Screenshot](Resources/Header-Vs-Screenshot.png)
 
 ## Settings
 
@@ -32,4 +32,4 @@ This should support all other VS2019, VS2022, VS2026 targets, but flag an issue 
 3. That's it, it will appear in the _Installed_ extensions section like any other extension if you wish to remove.
 
 ## Licence
-[LICENCE](license)
+[LICENCE](LICENCE)
