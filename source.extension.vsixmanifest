@@ -4,7 +4,7 @@
         <Identity Id="MinimapHeadersExtension.cc71d1a8-45cd-41dc-b5fc-72f4dd7b5f93" Version="1.0" Language="en-US" Publisher="Oliver Lawson" />
         <DisplayName>MinimapHeadersExtension</DisplayName>
         <Description xml:space="preserve">Scrollbar Headers for Visual Studio</Description>
-        <License>LICENSE</License>
+        <License>LICENCE</License>
         <Tags>scrollbar;minimap;headers;navigation;organization;qol</Tags>
     </Metadata>
     <Installation>

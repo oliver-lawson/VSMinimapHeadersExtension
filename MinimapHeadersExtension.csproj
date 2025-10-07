@@ -53,7 +53,7 @@
     <Compile Include="ScrollbarOverlayMarginProvider.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="LICENSE">
+    <Content Include="LICENCE">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <IncludeInVSIX>true</IncludeInVSIX>
     </Content>
