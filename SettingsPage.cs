@@ -1,0 +1,79 @@
+﻿using Microsoft.VisualStudio.Shell;
+using System;
+using System.ComponentModel;
+
+namespace ScrollbarHeadersExtension
+{
+    // model that holds the actual settings
+    internal class MinimapSettings : BaseOptionModel<MinimapSettings>
+    {
+        public bool ShowCommentHeaders { get; set; } = true;
+        public bool ShowFunctions { get; set; } = true;
+        public bool ShowClasses { get; set; } = true;
+
+        public static event EventHandler<SettingsChangedEventArgs> SettingsChanged;
+
+        public void NotifyChanged()
+        {
+            SettingsChanged?.Invoke(this, new SettingsChangedEventArgs
+            {
+                ShowCommentHeaders = ShowCommentHeaders,
+                ShowFunctions = ShowFunctions,
+                ShowClasses = ShowClasses
+            });
+        }
+    }
+
+    // DialogPage wrapper for Tools > Options UI
+    public class SettingsPage : DialogPage
+    {
+        [Category("Display Options")]
+        [DisplayName("Show Comment Headers")]
+        [Description("Display section headers from comments (lines starting with ==, --, ##, **)")]
+        public bool ShowCommentHeaders
+        {
+            get => MinimapSettings.Instance.ShowCommentHeaders;
+            set => MinimapSettings.Instance.ShowCommentHeaders = value;
+        }
+
+        [Category("Display Options")]
+        [DisplayName("Show Functions")]
+        [Description("Display function names")]
+        public bool ShowFunctions
+        {
+            get => MinimapSettings.Instance.ShowFunctions;
+            set => MinimapSettings.Instance.ShowFunctions = value;
+        }
+
+        [Category("Display Options")]
+        [DisplayName("Show Classes")]
+        [Description("Display class names")]
+        public bool ShowClasses
+        {
+            get => MinimapSettings.Instance.ShowClasses;
+            set => MinimapSettings.Instance.ShowClasses = value;
+        }
+
+        protected override void OnApply(PageApplyEventArgs e)
+        {
+            if (e.ApplyBehavior == ApplyKind.Apply)
+            {
+                MinimapSettings.Instance.Save();
+                MinimapSettings.Instance.NotifyChanged();
+            }
+            base.OnApply(e);
+        }
+
+        public override void LoadSettingsFromStorage()
+        {
+            MinimapSettings.Instance.Load();
+        }
+    }
+
+    public class SettingsChangedEventArgs : EventArgs
+    {
+        public bool ShowCommentHeaders { get; set; }
+        public bool ShowFunctions { get; set; }
+        public bool ShowClasses { get; set; }
+    }
+}

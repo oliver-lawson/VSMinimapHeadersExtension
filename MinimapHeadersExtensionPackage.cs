@@ -1,4 +1,5 @@
 ﻿using Microsoft.VisualStudio.Shell;
+using ScrollbarHeadersExtension;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -25,6 +26,8 @@ namespace MinimapHeadersExtension
     /// </remarks>
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(MinimapHeadersExtensionPackage.PackageGuidString)]
+    [ProvideOptionPage(typeof(SettingsPage), "Minimap Headers", "General", 0, 0, true)]
+    [ProvideAutoLoad(Microsoft.VisualStudio.Shell.Interop.UIContextGuids80.SolutionExists, PackageAutoLoadFlags.BackgroundLoad)]
     public sealed class MinimapHeadersExtensionPackage : AsyncPackage
     {
         /// <summary>

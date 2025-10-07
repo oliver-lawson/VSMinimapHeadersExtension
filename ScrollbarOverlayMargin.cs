@@ -1,9 +1,11 @@
 ﻿using System;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text;
+using System.Linq;
 
 namespace ScrollbarHeadersExtension
 {
@@ -15,10 +17,31 @@ namespace ScrollbarHeadersExtension
         private readonly IVerticalScrollBar _scrollBar;
         private bool _isDisposed;
 
-        public ScrollbarOverlayMargin(IWpfTextView textView, IVerticalScrollBar scrollBar)
+        private bool _showCommentHeaders;
+        private bool _showFunctions;
+        private bool _showClasses;
+
+        private enum MarkerType { Header, Function, Class }
+
+        // looks for optional return type, optional scope (Class::), name, params, and NO semicolon before brace
+        private static readonly Regex FunctionDefRegex = new Regex(
+            @"^\s*(?:[\w\s*&<>:,]+\s+)?(?:(\w+)::)?(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:final\s*)?\s*(?:{|$)",
+            RegexOptions.Compiled);
+
+        // captures everything between class/struct and the inheritance/body
+        private static readonly Regex ClassRegex = new Regex(
+            @"^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(.+?)(?:\s*[:{\r\n]|$)",
+            RegexOptions.Compiled);
+
+        public ScrollbarOverlayMargin(IWpfTextView textView, IVerticalScrollBar scrollBar, MinimapSettings initialSettings)
         {
             _textView = textView;
             _scrollBar = scrollBar;
+
+            // copy initial settings
+            _showCommentHeaders = initialSettings.ShowCommentHeaders;
+            _showFunctions = initialSettings.ShowFunctions;
+            _showClasses = initialSettings.ShowClasses;
 
             Background = Brushes.Transparent;
             Width = 100;
@@ -28,6 +51,18 @@ namespace ScrollbarHeadersExtension
             _textView.TextBuffer.Changed += OnTextBufferChanged;
             _scrollBar.TrackSpanChanged += OnTrackSpanChanged;
 
+            // subscribe to the static event
+            MinimapSettings.SettingsChanged += OnStaticSettingsChanged;
+
+            UpdateOverlay();
+        }
+
+        private void OnStaticSettingsChanged(object sender, SettingsChangedEventArgs e)
+        {
+            // update our local settings
+            _showCommentHeaders = e.ShowCommentHeaders;
+            _showFunctions = e.ShowFunctions;
+            _showClasses = e.ShowClasses;
             UpdateOverlay();
         }
 
@@ -47,25 +82,32 @@ namespace ScrollbarHeadersExtension
 
                 foreach (var line in snapshot.Lines)
                 {
-                    string lineText = line.GetText().TrimStart();
+                    string lineText = line.GetText();
+                    string trimmedText = lineText.TrimStart();
 
-                    if (IsSectionHeader(lineText))
+                    if (_showCommentHeaders && IsSectionHeader(trimmedText))
                     {
-                        string headerText = ExtractHeaderText(lineText);
-                        var bufferPosition = line.Start;
-                        double scrollMapPosition = _scrollBar.Map.GetCoordinateAtBufferPosition(bufferPosition);
-                        double yCoordinate = _scrollBar.GetYCoordinateOfScrollMapPosition(scrollMapPosition);
-                        yCoordinate -= _scrollBar.TrackSpanTop;
-
-                        DrawHeaderLabel(headerText, yCoordinate);
+                        string headerText = ExtractHeaderText(trimmedText);
+                        DrawMarker(headerText, line.Start, MarkerType.Header);
+                    }
+                    else if (_showClasses && IsClassDefinition(trimmedText, out string className))
+                    {
+                        DrawMarker(className, line.Start, MarkerType.Class);
+                    }
+                    else if (_showFunctions && IsFunctionDefinition(trimmedText, out string functionName))
+                    {
+                        DrawMarker(functionName, line.Start, MarkerType.Function);
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error updating overlay: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MinimapHeaders: Error updating overlay: {ex.Message}");
             }
         }
+
+        ////
+        // === Code Parsing ===
 
         private bool IsSectionHeader(string lineText)
         {
@@ -85,41 +127,223 @@ namespace ScrollbarHeadersExtension
             string text = lineText.TrimStart('/', '*', ' ', '\t');
             text = text.Trim('=', '-', '#', '*', ' ', '\t');
 
-            if (text.Length > 15)
-                text = text.Substring(0, 12) + "...";
+            if (text.Length > 20)
+                text = text.Substring(0, 20);
 
             return text;
         }
 
-        private void DrawHeaderLabel(string text, double yPos)
+        private bool IsFunctionDefinition(string lineText, out string functionName)
+        {
+            functionName = null;
+
+            // skip empty lines and comments
+            if (string.IsNullOrWhiteSpace(lineText) || lineText.TrimStart().StartsWith("//"))
+                return false;
+
+            string trimmed = lineText.Trim();
+
+            // skip lines with semicolons - these are function calls, not definitions
+            //  this also stops .h declarations spamming the minibar, as these
+            //  are usually compact and not needed
+            // exception: allow semicolons after } (like "} catch {};") 
+            int semiIndex = trimmed.IndexOf(';');
+            if (semiIndex >= 0)
+            {
+                // check if semicolon is after a closing brace
+                string beforeSemi = trimmed.Substring(0, semiIndex).Trim();
+                if (!beforeSemi.EndsWith("}"))
+                    return false; // it's a function call or forward declaration (probably)
+            }
+
+            // skip lines inside string literals (simple check for quotes before brackets)
+            int firstQuote = trimmed.IndexOfAny(new[] { '"', '\'' });
+            int firstParen = trimmed.IndexOf('(');
+            if (firstQuote >= 0 && firstQuote < firstParen)
+                return false; // we're probably inside a string
+
+            // skip some obvious control structures
+            if (trimmed.StartsWith("if") || trimmed.StartsWith("while") ||
+                trimmed.StartsWith("for") || trimmed.StartsWith("switch") ||
+                trimmed.StartsWith("return"))
+                return false;
+
+            // skip UE macros (UFUNCTION, UPROPERTY, UCLASS, GENERATED_BODY, etc.)
+            if (Regex.IsMatch(trimmed, @"^\s*[A-Z_]+\s*\("))
+                return false;
+
+            var match = FunctionDefRegex.Match(lineText);
+            if (match.Success)
+            {
+                // if there's a scope (Class::method), use the method name
+                string scopeName = match.Groups[1].Value;
+                string methodName = match.Groups[2].Value;
+
+                if (!string.IsNullOrEmpty(scopeName))
+                {
+                    // found a scoped method definition like "SiteManager::createSite"
+                    functionName = methodName;
+                }
+                else
+                {
+                    // no scope, just use the function name!
+                    functionName = methodName;
+                }
+
+                // skip if there's no space before the opening bracket (likely a macro?)
+                //  but allow constructors (where the function name matches the class name pattern)
+                int namePos = lineText.LastIndexOf(methodName, StringComparison.Ordinal);
+                if (namePos >= 0 && namePos + methodName.Length < lineText.Length)
+                {
+                    char nextChar = lineText[namePos + methodName.Length];
+                    if (nextChar == '(' && IsLikelyMacro(methodName))
+                        return false;
+                }
+
+                // filter out common false positives
+                if (IsLikelyNotFunction(functionName))
+                    return false;
+
+                // and finally, truncate to fit our minimap
+                //  I'm not bothering with a trailing ellipsis, it's obvious to me
+                //  when names are cut off and we'd just waste a char
+                //
+                //  TODO: make this responsive to different VS minimap size options
+                if (functionName.Length > 20)
+                    functionName = functionName.Substring(0, 20);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsLikelyMacro(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return true;
+
+            // remove underscores to check letter composition - ie allowing functions that were Named_So
+            string lettersOnly = name.Replace("_", "");
+
+            // if all letters are uppercase, it's *likely* a macro (UFUNCTION, GENERATED_BODY, etc)
+            if (!string.IsNullOrEmpty(lettersOnly) && lettersOnly.All(char.IsUpper))
+                return true;
+
+            return false;
+        }
+
+        private bool IsClassDefinition(string lineText, out string className)
+        {
+            // much easier than function parsing.
+            //  just need to check for API and final/abstract
+            className = null;
+
+            if (string.IsNullOrWhiteSpace(lineText) || lineText.TrimStart().StartsWith("//"))
+                return false;
+
+            var match = ClassRegex.Match(lineText);
+            if (match.Success)
+            {
+                // get the captured text between 'class/struct' and ':/{'
+                string captured = match.Groups[1].Value.Trim();
+
+                // split by whitespace and filter out API macros/other noise
+                var parts = captured.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                // find the actual class name (skip API macros, final, etc.)
+                //  this is ugly but seems to behave surprisingly consistently,
+                //  at least with the UE codebases I checked
+                // TODO: verify this more thoroughly, look into more weird keywords in
+                //  modern C++ I may have missed
+                className = parts.LastOrDefault(part =>
+                    !part.EndsWith("_API") &&
+                    !part.EndsWith("_EXPORT") &&
+                    !part.Equals("final", StringComparison.OrdinalIgnoreCase) &&
+                    !part.Equals("abstract", StringComparison.OrdinalIgnoreCase) &&
+                    Regex.IsMatch(part, @"^[A-Z_]\w*$")); // starts with uppercase?
+
+                if (!string.IsNullOrEmpty(className))
+                {
+                    if (className.Length > 20)
+                        className = className.Substring(0, 20);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsLikelyNotFunction(string name)
+        {
+            // skip common keywords
+            string[] notFunctions = { "if", "while", "for", "switch", "return", "throw", "catch", "sizeof", "typeof", "delete", "new" };
+            return notFunctions.Contains(name, StringComparer.OrdinalIgnoreCase);
+        }
+
+        ////
+        // === Draw Marker ===
+        private void DrawMarker(string text, SnapshotPoint position, MarkerType type)
         {
             if (string.IsNullOrWhiteSpace(text))
                 return;
+            Brush foreground = Brushes.White;
+            int fontsize = 10;
+            
+            // this defaul offset works OK.  on my system and standard DPI, this places
+            //  the cursor line either exactly in the middle, or underneath the appropriate
+            //  text line, I think depending on how squished the VS minimap is.
+            int heightOffset = 9;
+
+
+            switch (type)
+            {
+                case MarkerType.Header:
+                    foreground = Brushes.White;
+                    fontsize = 13;
+                    heightOffset = -1; // draw it with header text bottom point on the line.
+                                       //  this way, headers just above functions (typical)
+                                       //  don't overlap!
+                    break;
+                case MarkerType.Function:
+                    // these colours match my default VS colours
+                    // TODO: grab appropriate colours from themes if possible
+                    foreground = new SolidColorBrush(Color.FromRgb(0xDC, 0xDC, 0xAA));
+                    break;
+                case MarkerType.Class:
+                    foreground = new SolidColorBrush(Color.FromRgb(0xBE, 0xB7, 0xFF)); 
+                    break;
+                default:
+                    break;
+            }
+
+            double scrollMapPosition = _scrollBar.Map.GetCoordinateAtBufferPosition(position);
+            double yCoordinate = _scrollBar.GetYCoordinateOfScrollMapPosition(scrollMapPosition);
+            yCoordinate -= _scrollBar.TrackSpanTop;
 
             var textBlock = new TextBlock
             {
                 Text = text,
-                Foreground = Brushes.White,
-                Background = new SolidColorBrush(Color.FromArgb(220, 50, 50, 50)),
-                FontSize = 9,
-                FontFamily = new FontFamily("Consolas"),
-                FontWeight = FontWeights.SemiBold,
-                Padding = new Thickness(3, 1, 3, 1),
-                MaxWidth = 95
+                Foreground = foreground,
+                // transparent bg.  feels enough to make text stand out from the
+                //  "text" behind it, but not enough that it fully obscures the
+                //  gutter columns showing git changes/errors/finds/breakpoints.
+                // maybe a better option is to draw the text one char to the right,
+                //  and leave at least the git part intact, but in practice the full
+                //  span text feels to be better to me.
+                Background = new SolidColorBrush(Color.FromArgb(180, 50, 50, 50)),
+                FontSize = fontsize,
+                //  this should ship with VS, TODO: verify and do fallbacks - Consolas?
+                //  TODO: options page this too
+                FontFamily = new FontFamily("Cascadia Code"),
+                FontWeight = FontWeights.Bold,
+                MaxWidth = 101
             };
 
-            var border = new Border
-            {
-                Child = textBlock,
-                BorderBrush = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(2)
-            };
+            Canvas.SetLeft(textBlock, 0);
+            Canvas.SetTop(textBlock, yCoordinate + heightOffset);
 
-            Canvas.SetLeft(border, 0);
-            Canvas.SetTop(border, yPos - 8);
-
-            Children.Add(border);
+            Children.Add(textBlock);
         }
 
         public FrameworkElement VisualElement => this;
@@ -138,6 +362,7 @@ namespace ScrollbarHeadersExtension
             _textView.LayoutChanged -= OnLayoutChanged;
             _textView.TextBuffer.Changed -= OnTextBufferChanged;
             _scrollBar.TrackSpanChanged -= OnTrackSpanChanged;
+            MinimapSettings.SettingsChanged -= OnStaticSettingsChanged;
             _isDisposed = true;
         }
     }
