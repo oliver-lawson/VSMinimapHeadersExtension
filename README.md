@@ -2,10 +2,11 @@
 # Minimap Headers
 ### Visual Studio 2022/2026 extension that can display code structure overlays on the minimap scrollbar
 
-Optionally shows:
+_Optionally_ shows:
 - **Comment "headers"** - lines starting with _at least 2_ of `==`, `--`, `##`, or `**`, eg `// ==== Header Name ====`
 - Parsed function names (automatic, C++ & C# supported)
-- Class definitions
+- Class and struct definitions
+- Access specifiers - pub, prot, priv, etc
 
 Inspired by the comment headers in VSCode that I always wanted in VS!
 
