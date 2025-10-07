@@ -19,7 +19,9 @@ namespace ScrollbarHeadersExtension
 
             if (scrollBarMargin is IVerticalScrollBar scrollBar)
             {
-                var margin = new ScrollbarOverlayMargin(wpfTextViewHost.TextView, scrollBar, MinimapSettings.Instance);
+                bool isCSharp = wpfTextViewHost.TextView.TextBuffer.ContentType.IsOfType("CSharp");
+
+                var margin = new ScrollbarOverlayMargin(wpfTextViewHost.TextView, scrollBar, MinimapSettings.Instance, isCSharp);
                 margin.Margin = new Thickness(-100, 0, 0, 0); // negative margin to draw on top of minimap
                 return margin;
             }

@@ -15,6 +15,7 @@ namespace ScrollbarHeadersExtension
 
         private readonly IWpfTextView _textView;
         private readonly IVerticalScrollBar _scrollBar;
+        private readonly bool _isCSharp;
         private bool _isDisposed;
 
         private bool _showCommentHeaders;
@@ -23,20 +24,31 @@ namespace ScrollbarHeadersExtension
 
         private enum MarkerType { Header, Function, Class }
 
-        // looks for optional return type, optional scope (Class::), name, params, and NO semicolon before brace
+        // C++ function regex - looks for optional return type, optional scope (Class::), name, params, and NO semicolon before brace
         private static readonly Regex FunctionDefRegex = new Regex(
             @"^\s*(?:[\w\s*&<>:,]+\s+)?(?:(\w+)::)?(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:final\s*)?\s*(?:{|$)",
             RegexOptions.Compiled);
 
-        // captures everything between class/struct and the inheritance/body
+        // C# function regex - handles lambdas with => and regular methods
+        private static readonly Regex CSharpFunctionRegex = new Regex(
+            @"^\s*(?:public|private|protected|internal|static|virtual|override|async|sealed|abstract|extern|unsafe)*\s*(?:[\w<>[\],\s*&?]+\s+)?(\w+)\s*\([^)]*\)\s*(?:=>|{|$)",
+            RegexOptions.Compiled);
+
+        // C++ class regex - captures everything between class/struct and the inheritance/body
         private static readonly Regex ClassRegex = new Regex(
             @"^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(.+?)(?:\s*[:{\r\n]|$)",
             RegexOptions.Compiled);
 
-        public ScrollbarOverlayMargin(IWpfTextView textView, IVerticalScrollBar scrollBar, MinimapSettings initialSettings)
+        // C# class regex - handles inheritance with : syntax
+        private static readonly Regex CSharpClassRegex = new Regex(
+            @"^\s*(?:public|private|protected|internal|static|sealed|abstract|partial)*\s*(?:class|struct|interface|record)\s+(\w+)",
+            RegexOptions.Compiled);
+
+        public ScrollbarOverlayMargin(IWpfTextView textView, IVerticalScrollBar scrollBar, MinimapSettings initialSettings, bool isCSharp)
         {
             _textView = textView;
             _scrollBar = scrollBar;
+            _isCSharp = isCSharp;
 
             // copy initial settings
             _showCommentHeaders = initialSettings.ShowCommentHeaders;
@@ -126,14 +138,57 @@ namespace ScrollbarHeadersExtension
         {
             string text = lineText.TrimStart('/', '*', ' ', '\t');
             text = text.Trim('=', '-', '#', '*', ' ', '\t');
-
-            if (text.Length > 20)
-                text = text.Substring(0, 20);
-
-            return text;
+            return TruncateName(text);
         }
 
         private bool IsFunctionDefinition(string lineText, out string functionName)
+        {
+            if (_isCSharp)
+                return IsCSharpFunctionDefinition(lineText, out functionName);
+            else
+                return IsCppFunctionDefinition(lineText, out functionName);
+        }
+
+        private bool IsCSharpFunctionDefinition(string lineText, out string functionName)
+        {
+            functionName = null;
+
+            // skip empty lines and comments
+            if (string.IsNullOrWhiteSpace(lineText) || lineText.TrimStart().StartsWith("//"))
+                return false;
+
+            string trimmed = lineText.Trim();
+
+            // skip attributes
+            if (trimmed.StartsWith("["))
+                return false;
+
+            // skip property definitions (get/set)
+            if (trimmed.Contains("{ get") || trimmed.Contains("{ set") || trimmed.Contains("=>") && trimmed.Contains(";"))
+            {
+                // but allow lambda methods that end with => Expression;
+                // we need to distinguish between properties and methods
+                if (!trimmed.Contains("("))
+                    return false;
+            }
+
+            var match = CSharpFunctionRegex.Match(lineText);
+            if (match.Success)
+            {
+                functionName = match.Groups[1].Value;
+
+                // filter out common false positives
+                if (IsLikelyNotFunction(functionName))
+                    return false;
+
+                functionName = TruncateName(functionName);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsCppFunctionDefinition(string lineText, out string functionName)
         {
             functionName = null;
 
@@ -209,9 +264,7 @@ namespace ScrollbarHeadersExtension
                 //  when names are cut off and we'd just waste a char
                 //
                 //  TODO: make this responsive to different VS minimap size options
-                if (functionName.Length > 20)
-                    functionName = functionName.Substring(0, 20);
-
+                functionName = TruncateName(functionName);
                 return true;
             }
 
@@ -234,6 +287,36 @@ namespace ScrollbarHeadersExtension
         }
 
         private bool IsClassDefinition(string lineText, out string className)
+        {
+            if (_isCSharp)
+                return IsCSharpClassDefinition(lineText, out className);
+            else
+                return IsCppClassDefinition(lineText, out className);
+        }
+
+        private bool IsCSharpClassDefinition(string lineText, out string className)
+        {
+            className = null;
+
+            if (string.IsNullOrWhiteSpace(lineText) || lineText.TrimStart().StartsWith("//"))
+                return false;
+
+            var match = CSharpClassRegex.Match(lineText);
+            if (match.Success)
+            {
+                className = match.Groups[1].Value;
+
+                if (!string.IsNullOrEmpty(className))
+                {
+                    className = TruncateName(className);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsCppClassDefinition(string lineText, out string className)
         {
             // much easier than function parsing.
             //  just need to check for API and final/abstract
@@ -265,13 +348,22 @@ namespace ScrollbarHeadersExtension
 
                 if (!string.IsNullOrEmpty(className))
                 {
-                    if (className.Length > 20)
-                        className = className.Substring(0, 20);
+                    className = TruncateName(className);
                     return true;
                 }
             }
 
             return false;
+        }
+
+        ////
+        // === Helper Funcs ===
+        private string TruncateName(string name)
+        {
+            const int maxLength = 20;
+            if (name.Length > maxLength)
+                return name.Substring(0, maxLength);
+            return name;
         }
 
         private bool IsLikelyNotFunction(string name)
@@ -289,7 +381,7 @@ namespace ScrollbarHeadersExtension
                 return;
             Brush foreground = Brushes.White;
             int fontsize = 10;
-            
+
             // this defaul offset works OK.  on my system and standard DPI, this places
             //  the cursor line either exactly in the middle, or underneath the appropriate
             //  text line, I think depending on how squished the VS minimap is.
@@ -311,7 +403,7 @@ namespace ScrollbarHeadersExtension
                     foreground = new SolidColorBrush(Color.FromRgb(0xDC, 0xDC, 0xAA));
                     break;
                 case MarkerType.Class:
-                    foreground = new SolidColorBrush(Color.FromRgb(0xBE, 0xB7, 0xFF)); 
+                    foreground = new SolidColorBrush(Color.FromRgb(0xBE, 0xB7, 0xFF));
                     break;
                 default:
                     break;
