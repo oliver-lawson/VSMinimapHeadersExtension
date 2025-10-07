@@ -21,8 +21,10 @@ namespace ScrollbarHeadersExtension
         private bool _showCommentHeaders;
         private bool _showFunctions;
         private bool _showClasses;
+        private bool _showAccessSpecifiers;
+        private bool _shortenAccessSpecifiers;
 
-        private enum MarkerType { Header, Function, Class }
+        private enum MarkerType { Header, Function, Class, AccessSpecifier }
 
         // C++ function regex - looks for optional return type, optional scope (Class::), name, params, and NO semicolon before brace
         private static readonly Regex FunctionDefRegex = new Regex(
@@ -54,6 +56,8 @@ namespace ScrollbarHeadersExtension
             _showCommentHeaders = initialSettings.ShowCommentHeaders;
             _showFunctions = initialSettings.ShowFunctions;
             _showClasses = initialSettings.ShowClasses;
+            _showAccessSpecifiers = initialSettings.ShowAccessSpecifiers;
+            _shortenAccessSpecifiers = initialSettings.ShortenAccessSpecifiers;
 
             Background = Brushes.Transparent;
             Width = 100;
@@ -75,6 +79,8 @@ namespace ScrollbarHeadersExtension
             _showCommentHeaders = e.ShowCommentHeaders;
             _showFunctions = e.ShowFunctions;
             _showClasses = e.ShowClasses;
+            _showAccessSpecifiers = e.ShowAccessSpecifiers;
+            _shortenAccessSpecifiers = e.ShortenAccessSpecifiers;
             UpdateOverlay();
         }
 
@@ -109,6 +115,10 @@ namespace ScrollbarHeadersExtension
                     else if (_showFunctions && IsFunctionDefinition(trimmedText, out string functionName))
                     {
                         DrawMarker(functionName, line.Start, MarkerType.Function);
+                    }
+                    else if (_showAccessSpecifiers && !_isCSharp && IsAccessSpecifier(trimmedText, out string accessName))
+                    {
+                        DrawMarker(accessName, line.Start, MarkerType.AccessSpecifier);
                     }
                 }
             }
@@ -286,6 +296,75 @@ namespace ScrollbarHeadersExtension
             return false;
         }
 
+        private bool IsAccessSpecifier(string lineText, out string accessName)
+        {
+            accessName = null;
+
+            if (string.IsNullOrWhiteSpace(lineText))
+                return false;
+
+            string trimmed = lineText.Trim();
+
+            // C++ access specifiers end with a colon
+            //  + some Qt/UE-specific ones I'm often dealing with
+            if (trimmed.EndsWith(":"))
+            {
+                string specifier = trimmed.TrimEnd(':').Trim();
+
+                // standard C++ access specifiers
+                if (specifier == "public" || specifier == "private" || specifier == "protected")
+                {
+                    accessName = (_shortenAccessSpecifiers ? ShortenAccessSpecifier(specifier) : specifier); // + ":";
+                    // trailing : isn't a bad idea I think, but it doesn't quite
+                    //  read.  could add as an extra setting but getting quite
+                    //  cluttered in the options panel maybe.
+                    return true;
+                }
+
+                // Qt-specific access specifiers
+                if (specifier == "signals" || specifier == "slots" ||
+                    specifier == "Q_SIGNALS" || specifier == "Q_SLOTS")
+                {
+                    accessName = (_shortenAccessSpecifiers ? ShortenAccessSpecifier(specifier) : specifier); // + ":";
+                    return true;
+                }
+
+                // Qt combined specifiers like "public slots", "private slots", etc
+                if (specifier.StartsWith("public ") || specifier.StartsWith("private ") || specifier.StartsWith("protected "))
+                {
+                    accessName = (_shortenAccessSpecifiers ? ShortenAccessSpecifier(specifier) : specifier); // + ":";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private string ShortenAccessSpecifier(string specifier)
+        {
+            // shorten common access specifiers
+            switch (specifier)
+            {
+                case "public": return "pub";
+                case "private": return "priv";
+                case "protected": return "prot";
+                case "signals": return "sig";
+                case "slots": return "slot";
+                case "Q_SIGNALS": return "Q_SIG";
+                case "Q_SLOTS": return "Q_SLOT";
+
+                // handle combined forms like "public slots"
+                case string s when s.StartsWith("public "):
+                    return "pub " + ShortenAccessSpecifier(s.Substring(7));
+                case string s when s.StartsWith("private "):
+                    return "priv " + ShortenAccessSpecifier(s.Substring(8));
+                case string s when s.StartsWith("protected "):
+                    return "prot " + ShortenAccessSpecifier(s.Substring(10));
+
+                default: return specifier;
+            }
+        }
+
         private bool IsClassDefinition(string lineText, out string className)
         {
             if (_isCSharp)
@@ -404,6 +483,9 @@ namespace ScrollbarHeadersExtension
                     break;
                 case MarkerType.Class:
                     foreground = new SolidColorBrush(Color.FromRgb(0xBE, 0xB7, 0xFF));
+                    break;
+                case MarkerType.AccessSpecifier:
+                    foreground = new SolidColorBrush(Color.FromRgb(0x50, 0x9C, 0xD6));
                     break;
                 default:
                     break;

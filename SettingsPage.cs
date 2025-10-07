@@ -10,6 +10,8 @@ namespace ScrollbarHeadersExtension
         public bool ShowCommentHeaders { get; set; } = true;
         public bool ShowFunctions { get; set; } = true;
         public bool ShowClasses { get; set; } = true;
+        public bool ShowAccessSpecifiers { get; set; } = false;
+        public bool ShortenAccessSpecifiers { get; set; } = true;
 
         public static event EventHandler<SettingsChangedEventArgs> SettingsChanged;
 
@@ -19,7 +21,9 @@ namespace ScrollbarHeadersExtension
             {
                 ShowCommentHeaders = ShowCommentHeaders,
                 ShowFunctions = ShowFunctions,
-                ShowClasses = ShowClasses
+                ShowClasses = ShowClasses,
+                ShowAccessSpecifiers = ShowAccessSpecifiers,
+                ShortenAccessSpecifiers = ShortenAccessSpecifiers
             });
         }
     }
@@ -54,6 +58,24 @@ namespace ScrollbarHeadersExtension
             set => MinimapSettings.Instance.ShowClasses = value;
         }
 
+        [Category("Display Options")]
+        [DisplayName("Show Access Specifiers")]
+        [Description("Display C++ access specifiers (public:, private:, protected:, signals:, slots:) - C++ files only")]
+        public bool ShowAccessSpecifiers
+        {
+            get => MinimapSettings.Instance.ShowAccessSpecifiers;
+            set => MinimapSettings.Instance.ShowAccessSpecifiers = value;
+        }
+
+        [Category("Formatting Options")]
+        [DisplayName("Shorten Access Specifiers")]
+        [Description("Abbreviate access specifiers (public=>pub:, protected=>prot, etc.)")]
+        public bool ShortenAccessSpecifiers
+        {
+            get => MinimapSettings.Instance.ShortenAccessSpecifiers;
+            set => MinimapSettings.Instance.ShortenAccessSpecifiers = value;
+        }
+
         protected override void OnApply(PageApplyEventArgs e)
         {
             if (e.ApplyBehavior == ApplyKind.Apply)
@@ -75,5 +97,7 @@ namespace ScrollbarHeadersExtension
         public bool ShowCommentHeaders { get; set; }
         public bool ShowFunctions { get; set; }
         public bool ShowClasses { get; set; }
+        public bool ShowAccessSpecifiers { get; set; }
+        public bool ShortenAccessSpecifiers { get; set; }
     }
 }
