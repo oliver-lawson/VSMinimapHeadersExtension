@@ -10,7 +10,7 @@ _Optionally_ shows:
 
 Inspired by the comment headers in VSCode that I always wanted in VS!
 
-![Screenshot](Resources/Header-Vs-Screenshot.png)
+![Screenshot](Resources/animated.gif)
 
 ## Settings
 
